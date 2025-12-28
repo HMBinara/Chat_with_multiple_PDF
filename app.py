@@ -214,7 +214,6 @@ def main():
         st.markdown("### 📜 Conversation History")
         if st.button("Clear History"):
             st.session_state.messages = []
-            st.session_state.vectorstore = None
             st.rerun()
 
 if __name__ == "__main__":

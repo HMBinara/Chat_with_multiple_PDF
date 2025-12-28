@@ -76,8 +76,11 @@ streamlit run app.py
 2. **Text Chunking**: Splits text into manageable chunks (1000 characters with 200 overlap)
 3. **Embeddings**: Converts chunks into vector embeddings using OpenAI
 4. **Vector Store**: Stores embeddings in FAISS for fast similarity search
-5. **Conversational Chain**: Uses LangChain's ConversationalRetrievalChain with memory
-6. **Response Generation**: Retrieves relevant chunks and generates contextual answers
+5. **RAG Pattern**: Uses Retrieval Augmented Generation with conversational memory
+   - Retrieves relevant document chunks based on user questions
+   - Maintains chat history for context-aware responses
+   - Generates answers using GPT-3.5-turbo with retrieved context
+6. **Response Generation**: Combines retrieved context with chat history for contextual answers
 
 ## Configuration
 
