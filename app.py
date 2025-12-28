@@ -2,11 +2,9 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 from PyPDF2 import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
 
 # Load environment variables
 load_dotenv()
@@ -39,49 +37,71 @@ def get_vectorstore(text_chunks):
     vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
     return vectorstore
 
-def get_conversation_chain(vectorstore):
-    """Create conversational retrieval chain with memory."""
+def get_conversation_response(vectorstore, question, chat_history):
+    """Get response using RAG pattern with conversational memory."""
+    # Retrieve relevant documents
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    relevant_docs = retriever.invoke(question)
+    
+    # Format context from retrieved documents
+    context = "\n\n".join([doc.page_content for doc in relevant_docs])
+    
+    # Format chat history
+    history_text = ""
+    for msg in chat_history:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        history_text += f"{role}: {msg['content']}\n"
+    
+    # Create prompt with context and history
+    prompt = f"""You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Keep the answer concise and informative.
+
+Chat History:
+{history_text}
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+    
+    # Get response from LLM
     llm = ChatOpenAI(temperature=0.7, model_name="gpt-3.5-turbo")
+    response = llm.invoke(prompt)
     
-    memory = ConversationBufferMemory(
-        memory_key='chat_history',
-        return_messages=True,
-        output_key='answer'
-    )
-    
-    conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-        memory=memory,
-        return_source_documents=True
-    )
-    
-    return conversation_chain
+    return response.content, relevant_docs
 
 def handle_user_input(user_question):
     """Handle user questions and display chat history."""
-    if st.session_state.conversation is None:
+    if st.session_state.vectorstore is None:
         st.warning("Please upload and process PDF files first!")
         return
     
     with st.spinner("Thinking..."):
-        response = st.session_state.conversation({'question': user_question})
+        # Get response with relevant documents
+        answer, source_docs = get_conversation_response(
+            st.session_state.vectorstore, 
+            user_question, 
+            st.session_state.messages
+        )
     
-    st.session_state.chat_history = response['chat_history']
+    # Add messages to history
+    st.session_state.messages.append({"role": "user", "content": user_question})
+    st.session_state.messages.append({"role": "assistant", "content": answer})
     
-    # Display chat history
-    for i, message in enumerate(st.session_state.chat_history):
-        if i % 2 == 0:  # User message
-            st.write(f"**🧑 You:** {message.content}")
-        else:  # Bot message
-            st.write(f"**🤖 Assistant:** {message.content}")
+    # Display all messages
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.write(f"**🧑 You:** {message['content']}")
+        else:
+            st.write(f"**🤖 Assistant:** {message['content']}")
     
-    # Display source documents if available
-    if 'source_documents' in response and response['source_documents']:
+    # Display source documents
+    if source_docs:
         with st.expander("📚 Source Documents"):
-            for i, doc in enumerate(response['source_documents']):
+            for i, doc in enumerate(source_docs):
                 st.write(f"**Source {i+1}:**")
-                st.write(doc.page_content[:300] + "...")
+                st.write(doc.page_content[:300] + ("..." if len(doc.page_content) > 300 else ""))
                 st.divider()
 
 def main():
@@ -106,10 +126,10 @@ def main():
     """, unsafe_allow_html=True)
     
     # Initialize session state
-    if "conversation" not in st.session_state:
-        st.session_state.conversation = None
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    if "vectorstore" not in st.session_state:
+        st.session_state.vectorstore = None
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
     
     # Header
     st.title("📚 Chat with Multiple PDFs")
@@ -148,11 +168,10 @@ def main():
                         
                         # Create vector store
                         st.info("🧠 Creating vector embeddings...")
-                        vectorstore = get_vectorstore(text_chunks)
+                        st.session_state.vectorstore = get_vectorstore(text_chunks)
                         
-                        # Create conversation chain
-                        st.info("💬 Setting up conversation chain...")
-                        st.session_state.conversation = get_conversation_chain(vectorstore)
+                        # Clear previous messages
+                        st.session_state.messages = []
                         
                         st.success("✅ PDFs processed successfully! You can now ask questions.")
                     except Exception as e:
@@ -190,13 +209,13 @@ def main():
         handle_user_input(user_question)
     
     # Display chat history if exists
-    if st.session_state.chat_history:
+    if st.session_state.messages:
         st.markdown("---")
         st.markdown("### 📜 Conversation History")
         if st.button("Clear History"):
-            st.session_state.chat_history = []
-            st.session_state.conversation = None
-            st.experimental_rerun()
+            st.session_state.messages = []
+            st.session_state.vectorstore = None
+            st.rerun()
 
 if __name__ == "__main__":
     # Check for API key
